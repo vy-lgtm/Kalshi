@@ -205,7 +205,7 @@ def insert_markets(conn, markets):
                 ?,?,?, ?
             )
         """, rows)
-        # No commit here — caller handles batching
+        conn.commit()
     except sqlite3.Error as e:
         log.error("DB insert failed: %s", e)
         log.debug("Traceback: %s", traceback.format_exc())
@@ -329,7 +329,6 @@ def scrape(conn):
             except Exception as e:
                 log.error("Fetch failed after retries: %s", e)
                 log.error("Saving checkpoint — restart script to resume from page %d", page)
-                conn.commit()  # flush pending writes before exit
                 save_checkpoint(cursor, total)
                 return total
 
@@ -343,16 +342,10 @@ def scrape(conn):
             except sqlite3.Error as e:
                 log.error("DB write failed on page %d: %s", page, e)
                 log.error("Saving checkpoint — restart to resume")
-                conn.commit()  # flush pending writes before exit
                 save_checkpoint(cursor, total)
                 return total
 
             total += inserted
-
-            # ── Batch commit every 10 pages ───────────────────
-            if page % 10 == 0:
-                conn.commit()
-                log.debug("Committed batch at page %d", page)
 
             # ── Progress ──────────────────────────────────────
             elapsed = (datetime.now() - start).total_seconds()
@@ -379,7 +372,6 @@ def scrape(conn):
     except KeyboardInterrupt:
         log.warning("Interrupted by user (Ctrl+C)")
         log.warning("Checkpoint saved — restart to resume from page %d", page)
-        conn.commit()  # flush pending writes
         save_checkpoint(cursor, total)
         return total
 
@@ -387,12 +379,10 @@ def scrape(conn):
         log.error("Unexpected crash: %s", e)
         log.error("Traceback: %s", traceback.format_exc())
         log.error("Checkpoint saved — restart to resume")
-        conn.commit()  # flush pending writes
         save_checkpoint(cursor, total)
         return total
 
-    # Clean finish — final commit and remove checkpoint
-    conn.commit()
+    # Clean finish — remove checkpoint
     clear_checkpoint()
     return total
 
